@@ -1,0 +1,56 @@
+services:
+  backend:
+    build: ./backend
+    ports:
+      - "8000:8000"
+    environment:
+      - DATABASE_URL=sqlite+aiosqlite:///./fireexit.db
+      - MQTT_BROKER=mosquitto
+      - REDIS_URL=redis://redis:6379/0
+      - SECRET_KEY=fireexit-prod-change-me
+    volumes:
+      - backend_data:/app/data
+    depends_on:
+      - redis
+      - mosquitto
+    restart: unless-stopped
+
+  frontend:
+    build: ./frontend
+    ports:
+      - "3000:80"
+    depends_on:
+      - backend
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    restart: unless-stopped
+
+  mosquitto:
+    image: eclipse-mosquitto:2
+    ports:
+      - "1883:1883"
+    volumes:
+      - ./infra/mosquitto.conf:/mosquitto/config/mosquitto.conf
+    restart: unless-stopped
+
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: fireexit
+      POSTGRES_PASSWORD: fireexit
+      POSTGRES_DB: fireexit
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    restart: unless-stopped
+    profiles:
+      - full
+
+volumes:
+  backend_data:
+  pgdata:
