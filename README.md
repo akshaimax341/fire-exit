@@ -1,7 +1,7 @@
 # FireExit — Smart Fire Evacuation Digital Twin
 
 
-**DEMONSTARTION VIDEO:https://drive.google.com/file/d/1KdH9B_7eQ0u77p69C5syXvKMY3LUThT/view?usp=sharing ***
+**DEMONSTARTION VIDEO:https://drive.google.com/file/d/1K-dH9B_7eQ0u77p69C5syXvKMY3LUThT/view?usp=sharing ***
 **PLEASE VIEW FOR CLEARER UNDERSTANDING**
 
 Real-time **command-center digital twin** for fire evacuation: ESP32 sensors → FastAPI hazard + multi-exit A* + crowd sim → React / Three.js ops UI.
