@@ -516,6 +516,17 @@ docker compose --profile tunnel up -d ngrok
 - Inspector: http://localhost:4040  
 - Details: [docs/PUBLIC_TUNNEL.md](docs/PUBLIC_TUNNEL.md)
 
+### Railway backend
+
+Host the API on [Railway](https://railway.app) with Postgres (recommended for ESP32 HTTPS ingest).
+
+1. Push to GitHub → Railway **Deploy from GitHub** → set **Root Directory** to `backend`
+2. Add **PostgreSQL**; set variables (`DATABASE_URL`, `SECRET_KEY`, `CORS_ORIGINS`)
+3. Generate a public domain → confirm `/api/health` and `/docs`
+4. Point ESP32 `API_BASE` and local frontend `VITE_API_URL` / `VITE_WS_URL` at that domain
+
+Full checklist, env table, and smoke tests: **[docs/DEPLOYMENT.md — Railway](docs/DEPLOYMENT.md#railway-backend)**.
+
 ---
 
 ## 13. Demo script
@@ -536,7 +547,7 @@ docker compose --profile tunnel up -d ngrok
 |-----|----------|
 | [Architecture](docs/ARCHITECTURE.md) | Control loop, hazard math, fail-safes, LED semantics |
 | [API](docs/API.md) | Auth, simulation, IoT, building, analytics, WebSocket, MQTT |
-| [Deployment](docs/DEPLOYMENT.md) | Docker, ESP32, security, capacity targets |
+| [Deployment](docs/DEPLOYMENT.md) | Docker, Railway, ESP32, security, capacity targets |
 | [Public tunnel](docs/PUBLIC_TUNNEL.md) | Ngrok Docker recipes |
 
 Capacity targets (deployment guide): ~100 rooms, ~100 ESP32s, ~1000 occupants; tick ~200 ms; path refresh ~1 s; UI ~60 FPS with people mesh capping.
