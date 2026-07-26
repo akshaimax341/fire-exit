@@ -131,9 +131,13 @@ Demo login against the Railway API: `admin` / `admin123`.
 ### Railway notes
 
 - Prefer the **private** Postgres URL Railway injects between services (no public egress needed).
+  Use `${{Postgres.DATABASE_PRIVATE_URL}}` when available; otherwise `${{Postgres.DATABASE_URL}}`.
 - Do **not** hardcode `PORT` in Railway variables — the platform sets it at runtime.
 - Redeploys recreate the container; Postgres keeps devices / telemetry / alerts durable.
 - Hosting Mosquitto on Railway is out of scope for this path; ESP32 uses HTTPS telemetry.
+- If healthchecks fail with **service unavailable**, check deploy **Runtime logs** (not only build logs)
+  for `Database init failed` — usually a missing/wrong `DATABASE_URL` link to the Postgres plugin.
+- Leave **Custom Start Command** empty; `entrypoint.sh` binds uvicorn to `$PORT`.
 
 ## ESP32 integration
 

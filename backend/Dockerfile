@@ -10,8 +10,10 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 COPY app ./app
+COPY entrypoint.sh /entrypoint.sh
+RUN chmod +x /entrypoint.sh
 
 EXPOSE 8000
 
-# Shell form so Railway's runtime $PORT expands correctly
-CMD uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8000}
+# Railway injects PORT at runtime — entrypoint expands it reliably
+ENTRYPOINT ["/entrypoint.sh"]

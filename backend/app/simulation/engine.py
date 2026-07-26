@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import math
 import random
 import time
@@ -846,9 +847,15 @@ class SimulationManager:
         from app.services.device_registry import device_registry
 
         self.engine.spawn_people(40)
+        broker = (settings.MQTT_BROKER or "").strip().lower()
+        # Skip localhost MQTT on cloud hosts (Railway) — HTTP telemetry still works
+        skip_mqtt = broker in {"", "localhost", "127.0.0.1", "disabled", "none", "-"}
         self.mqtt = MQTTBridge(settings.MQTT_BROKER, settings.MQTT_PORT, settings.MQTT_TOPIC_PREFIX)
         self.mqtt.set_command_handler(self._on_mqtt_command)
-        self.mqtt.connect()
+        if skip_mqtt:
+            logging.getLogger(__name__).info("MQTT skipped (broker=%r) — local fail-safe mode", broker)
+        else:
+            self.mqtt.connect()
         device_registry.start_watchdog()
         self.status = "ready"
         self._loop_task = asyncio.create_task(self._loop())
