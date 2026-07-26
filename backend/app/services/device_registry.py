@@ -9,6 +9,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any, Callable, Optional
 
+from app.core.timeutil import iso_ms
 from app.engines.hazard import SensorReading, compute_hazard, hazard_to_dict
 
 
@@ -38,6 +39,10 @@ class DeviceState:
     prev_temperature: float = 22.0
     prev_gas: float = 0.0
     mqtt_topic: str = ""
+    retrieve_ms: float | None = None
+    received_at: str | None = None
+    received_at_ms: int | None = None
+    device_timestamp_ms: int | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -55,11 +60,15 @@ class DeviceState:
             "battery": round(self.battery, 1),
             "signal": round(self.signal, 1),
             "occupancy": self.occupancy,
-            "last_seen": datetime.utcfromtimestamp(self.last_seen).isoformat() + "Z",
+            "last_seen": iso_ms(datetime.utcfromtimestamp(self.last_seen)),
             "online": self.online,
             "hazard": round(self.hazard, 4),
             "health": self.health,
             "mqtt_topic": self.mqtt_topic or f"fireexit/device/{self.device_id}",
+            "retrieve_ms": self.retrieve_ms,
+            "received_at": self.received_at,
+            "received_at_ms": self.received_at_ms,
+            "device_timestamp_ms": self.device_timestamp_ms,
         }
 
 
@@ -180,6 +189,21 @@ class DeviceRegistry:
         hazard = compute_hazard(reading, capacity=30)
         status = derive_status(hazard.score, flame, payload.get("status"))
 
+        # Explicit SAFE from Wokwi/ESP32 wins — clear inferred flame/smoke so rooms recover
+        if status == "SAFE":
+            flame = False
+            if payload.get("smoke") is None:
+                smoke = min(smoke, 4.0)
+            else:
+                smoke = min(float(payload["smoke"]), 8.0)
+            reading = SensorReading(
+                temperature=float(payload["temperature"]),
+                smoke=smoke,
+                flame=False,
+                occupancy=occupancy,
+            )
+            hazard = compute_hazard(reading, capacity=30)
+
         node_id = payload.get("nodeId")
         if not node_id and existing:
             node_id = existing.node_id
@@ -208,6 +232,12 @@ class DeviceRegistry:
             mqtt_topic=f"fireexit/device/{device_id}",
         )
         was_offline = existing is not None and not existing.online
+        # Keep prior retrieve timing until process_telemetry refreshes it
+        if existing:
+            state.retrieve_ms = existing.retrieve_ms
+            state.received_at = existing.received_at
+            state.received_at_ms = existing.received_at_ms
+            state.device_timestamp_ms = existing.device_timestamp_ms
         self.devices[device_id] = state
 
         if was_offline:
@@ -264,7 +294,7 @@ class DeviceRegistry:
             "device_id": device_id,
             "node_id": node_id,
             "acknowledged": False,
-            "timestamp": datetime.utcnow().isoformat() + "Z",
+            "timestamp": iso_ms(),
             "_ts": now,
         }
         self.alerts.insert(0, alert)

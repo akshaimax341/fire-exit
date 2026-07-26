@@ -121,25 +121,86 @@ export function SelectionPanel({ className }: { className?: string }) {
               <Metric icon={<Wifi className="h-3.5 w-3.5" />} label="Signal" value={`${device?.signal ?? room.signal ?? -55} dBm`} />
               <Metric icon={<Radio className="h-3.5 w-3.5" />} label="Sensor" value={room.sensor_health} />
               <Metric
-                icon={<Wifi className="h-3.5 w-3.5" />}
-                label="Link"
-                value={device ? (device.online ? 'Online' : 'Offline') : 'Sim'}
+                icon={<Timer className="h-3.5 w-3.5" />}
+                label="Retrieve"
+                value={
+                  (device?.retrieve_ms ?? room.retrieve_ms) != null
+                    ? `${Number(device?.retrieve_ms ?? room.retrieve_ms).toFixed(1)} ms`
+                    : '—'
+                }
               />
             </div>
 
             <div className="rounded-2xl bg-white/[0.04] p-3 ring-1 ring-white/8">
               <div className="mb-1 text-[10px] font-semibold uppercase tracking-wider text-white/40">
-                Last Updated
+                Last Updated · ms
               </div>
               <div className="font-mono text-xs text-white/70">
-                {device?.last_seen ? new Date(device.last_seen).toLocaleString() : 'Simulation tick'}
+                {device?.received_at || room.received_at || device?.last_seen
+                  ? new Date(
+                      device?.received_at || room.received_at || device?.last_seen || '',
+                    ).toLocaleTimeString(undefined, {
+                      hour: '2-digit',
+                      minute: '2-digit',
+                      second: '2-digit',
+                      fractionalSecondDigits: 3,
+                    } as Intl.DateTimeFormatOptions)
+                  : 'Simulation tick'}
               </div>
+              {(device?.retrieve_ms ?? room.retrieve_ms) != null && (
+                <div className="mt-1 font-mono text-[11px] text-accent">
+                  Retrieve {Number(device?.retrieve_ms ?? room.retrieve_ms).toFixed(3)} ms
+                </div>
+              )}
               {route?.found && (
                 <div className="mt-2 text-[11px] text-white/50">
                   Route: <span className="font-mono text-accent">{route.path.join(' → ')}</span>
                 </div>
               )}
             </div>
+
+            {canControl && (
+              <div className="space-y-2 rounded-2xl bg-white/[0.04] p-3 ring-1 ring-white/8">
+                <div className="text-[10px] font-semibold uppercase tracking-wider text-white/40">
+                  Sensor adjust
+                </div>
+                <div className="grid grid-cols-2 gap-2">
+                  <Button
+                    size="sm"
+                    variant="danger"
+                    onClick={() =>
+                      command('sensors', {
+                        node_id: selected,
+                        temperature: Math.min(120, room.temperature + 15),
+                        gas: Math.min(4095, (room.gas ?? 0) + 400),
+                        smoke: Math.min(100, room.smoke + 20),
+                        fire_intensity: Math.min(1, (room.fire_intensity ?? 0) + 0.25),
+                        flame: true,
+                      })
+                    }
+                  >
+                    Boost sensors
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="success"
+                    onClick={() =>
+                      command('sensors', {
+                        node_id: selected,
+                        temperature: 22,
+                        humidity: 40,
+                        gas: 150,
+                        smoke: 0,
+                        fire_intensity: 0,
+                        flame: false,
+                      })
+                    }
+                  >
+                    Reset ambient
+                  </Button>
+                </div>
+              </div>
+            )}
 
             <div>
               <div className="mb-2 text-[10px] font-semibold uppercase tracking-wider text-white/40">

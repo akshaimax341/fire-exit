@@ -1,15 +1,24 @@
+# Dependencies / build
 node_modules/
+frontend/node_modules/
 dist/
+*.egg-info/
+
+# Python
 .venv/
+backend/.venv/
 __pycache__/
 *.pyc
-.env
-*.db
-.DS_Store
-frontend/node_modules/
-backend/.venv/
-*.egg-info/
+.pytest_cache/
 .coverage
 htmlcov/
+
+# Local secrets & runtime data
+.env
+.env.local
+*.db
+
+# Editors / OS
+.DS_Store
 .idea/
 .vscode/

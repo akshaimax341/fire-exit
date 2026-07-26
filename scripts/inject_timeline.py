@@ -5,8 +5,8 @@ Broadcasts staged multi-sensor payloads into the live API to demonstrate
 slow smolder vs flashover scenarios.
 
 Usage:
-  python inject_timeline.py --scenario flashover
-  python inject_timeline.py --scenario smolder --base http://localhost:8000
+  python scripts/inject_timeline.py --scenario flashover
+  python scripts/inject_timeline.py --scenario smolder --base http://localhost:8000
 """
 
 from __future__ import annotations

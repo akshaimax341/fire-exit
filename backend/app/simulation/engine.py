@@ -17,9 +17,15 @@ from typing import Any, Callable, Optional
 from app.engines.hazard import SensorReading, compute_hazard, hazard_to_dict
 from app.engines.pathfinding import BuildingGraph, GraphEdge, GraphNode, PathResult
 from app.simulation.building_defaults import create_default_building
+from app.core.timeutil import iso_ms
 
 MAX_OCCUPANTS = 1000
 ROUTE_INTERVAL_S = 1.0  # Recalculate A* every second
+
+# Room considered safe / normal again below these readings
+SAFE_TEMP_C = 32.0
+SAFE_SMOKE_PCT = 12.0
+NORMAL_TEMP_C = 22.0
 
 
 class SimStatus(str, Enum):
@@ -69,6 +75,8 @@ class RoomState:
     signal: float = -55.0
     last_iot_update: Optional[float] = None
     iot_locked: bool = False  # when True, live ESP32 owns temp/smoke briefly
+    last_retrieve_ms: Optional[float] = None
+    last_received_at: Optional[str] = None
 
 
 class SimulationEngine:
@@ -82,9 +90,9 @@ class SimulationEngine:
         self.room_routes: dict[str, PathResult] = {}
         self.history: list[dict[str, Any]] = []
         self.alerts: list[dict[str, Any]] = []
-        self.spread_rate: float = 0.08
-        self.smoke_rate: float = 0.18  # smoke spreads faster than flame by default
-        self.heat_rate: float = 0.15
+        self.spread_rate: float = 0.14
+        self.smoke_rate: float = 0.32  # faster smoke build in burning room
+        self.heat_rate: float = 0.28  # stronger fire intensity / heat growth
         self._listeners: list[Callable] = []
         self._task: Optional[asyncio.Task] = None
         self._last_path_ms: float = 0.0
@@ -93,9 +101,9 @@ class SimulationEngine:
         self._last_route_time: float = 0.0
         self._route_force: bool = True
         self.config: dict[str, Any] = {
-            "spread_rate": 0.08,
-            "smoke_rate": 0.18,
-            "heat_rate": 0.15,
+            "spread_rate": 0.14,
+            "smoke_rate": 0.32,
+            "heat_rate": 0.28,
             "tick_ms": 200,
             "route_interval_s": ROUTE_INTERVAL_S,
             "max_occupants": MAX_OCCUPANTS,
@@ -269,15 +277,18 @@ class SimulationEngine:
 
     # ── Fire / smoke ──────────────────────────────────────────
 
-    def start_fire(self, node_id: str, intensity: float = 0.4):
+    def start_fire(self, node_id: str, intensity: float = 0.65):
         room = self.rooms.get(node_id)
         if not room:
             return False
         room.on_fire = True
         room.flame = True
         room.fire_intensity = max(room.fire_intensity, intensity)
-        room.temperature = max(room.temperature, 55.0)
-        room.smoke = max(room.smoke, 30.0)
+        room.temperature = max(room.temperature, 62.0)
+        room.smoke = max(room.smoke, 40.0)
+        # Simulated sensor suite at ignition (DHT22 + gas ADC-like)
+        room.humidity = max(15.0, room.humidity - 8.0)
+        room.gas = max(room.gas, 1400.0 + intensity * 1200.0)
         room.alarm = True
         room.led_color = "pulsing_red"
         name = self.graph.nodes[node_id].name
@@ -298,13 +309,23 @@ class SimulationEngine:
         battery: float = 100.0,
         signal: float = -55.0,
         auto_ignite: bool = False,
+        status: str | None = None,
     ) -> bool:
         """Blend live ESP32 reading into twin room state."""
         room = self.rooms.get(node_id)
         if not room:
             return False
+
+        status_u = (status or "").upper()
+        # Device-reported SAFE always clears the twin room (Wokwi / ESP32)
+        if status_u == "SAFE":
+            flame = False
+            auto_ignite = False
+            smoke = min(float(smoke), 5.0)
+            temperature = min(float(temperature), SAFE_TEMP_C - 1.0)
+
         room.temperature = float(temperature)
-        room.smoke = max(room.smoke, float(smoke))
+        room.smoke = float(smoke)
         room.humidity = float(humidity)
         room.gas = float(gas)
         room.device_id = device_id
@@ -313,17 +334,81 @@ class SimulationEngine:
         room.sensor_health = "ok"
         room.last_iot_update = time.time()
         room.iot_locked = True
+
+        # Safe / low readings → clear fire and return room to normal
+        if status_u == "SAFE" or (
+            not flame
+            and temperature < SAFE_TEMP_C
+            and smoke < SAFE_SMOKE_PCT
+            and gas < 600
+        ):
+            was = room.on_fire or room.alarm
+            self._restore_room_safe(room, announce=was)
+            # Force green + clear immediately for UI
+            room.on_fire = False
+            room.flame = False
+            room.fire_intensity = 0.0
+            room.alarm = False
+            room.led_color = "green"
+            room.smoke = min(room.smoke, 5.0)
+            room.temperature = min(room.temperature, NORMAL_TEMP_C + 1.0)
+            node = self.graph.nodes.get(node_id)
+            if node and node.node_type != "exit":
+                node.blocked = False
+            safe_reading = SensorReading(
+                temperature=room.temperature,
+                smoke=room.smoke,
+                flame=False,
+                occupancy=room.occupancy,
+            )
+            result = compute_hazard(safe_reading, capacity=node.capacity if node else 30)
+            room.hazard = hazard_to_dict(result)
+            self.graph.update_hazard(node_id, result.score, False, room.occupancy)
+            self._route_force = True
+            if not self._building_has_active_fire():
+                self._release_trapped_people()
+                self._return_people_to_safe()
+            return True
+
+        # Activate room alarm on elevated smoke even before full ignition
+        if smoke >= 25 or temperature >= 45 or flame:
+            room.alarm = True
+            if smoke >= 25 and not flame and not room.on_fire:
+                room.led_color = "yellow" if smoke < 40 else "red"
         if flame or auto_ignite:
             room.flame = True
-            if not room.on_fire and (flame or temperature >= 55 or smoke >= 45):
+            if not room.on_fire and (flame or temperature >= 55 or smoke >= 35):
                 self.start_fire(node_id, intensity=0.42)
             else:
                 room.on_fire = True
                 room.fire_intensity = max(room.fire_intensity, 0.35)
                 room.alarm = True
                 room.led_color = "pulsing_red"
+        elif smoke >= 40 or temperature >= 60:
+            # Dense smoke / extreme heat without optical flame → treat as fire for routing
+            if not room.on_fire:
+                self.start_fire(node_id, intensity=0.38)
         self._route_force = True
         return True
+
+    def _restore_room_safe(self, room: RoomState, *, announce: bool = False) -> bool:
+        """Return a room to normal SAFE state (temp/smoke/LED/alarm)."""
+        was_hazard = room.on_fire or room.flame or room.alarm or room.smoke > SAFE_SMOKE_PCT
+        room.on_fire = False
+        room.flame = False
+        room.fire_intensity = 0.0
+        room.alarm = False
+        room.led_color = "green"
+        room.temperature = min(room.temperature, NORMAL_TEMP_C + 2.0)
+        if room.temperature > NORMAL_TEMP_C:
+            room.temperature = max(NORMAL_TEMP_C, room.temperature - 1.5)
+        room.smoke = max(0.0, min(room.smoke, SAFE_SMOKE_PCT * 0.5))
+        if room.smoke > 0:
+            room.smoke = max(0.0, room.smoke * 0.7)
+        if announce and was_hazard and room.node_id in self.graph.nodes:
+            name = self.graph.nodes[room.node_id].name
+            self._add_alert("info", f"Room SAFE — {name} returned to normal", room.node_id)
+        return was_hazard
 
     def block_exit(self, exit_id: str):
         node = self.graph.nodes.get(exit_id)
@@ -352,20 +437,67 @@ class SimulationEngine:
         room.smoke = min(100.0, room.smoke + amount)
         self._route_force = True
 
+    def set_room_sensors(
+        self,
+        node_id: str,
+        *,
+        temperature: float | None = None,
+        humidity: float | None = None,
+        gas: float | None = None,
+        smoke: float | None = None,
+        fire_intensity: float | None = None,
+        flame: bool | None = None,
+    ) -> bool:
+        """Manual sensor adjustment for a room (simulation / demo controls)."""
+        room = self.rooms.get(node_id)
+        if not room:
+            return False
+        if temperature is not None:
+            room.temperature = max(0.0, min(150.0, float(temperature)))
+        if humidity is not None:
+            room.humidity = max(0.0, min(100.0, float(humidity)))
+        if gas is not None:
+            room.gas = max(0.0, min(4095.0, float(gas)))
+        if smoke is not None:
+            room.smoke = max(0.0, min(100.0, float(smoke)))
+        if fire_intensity is not None:
+            room.fire_intensity = max(0.0, min(1.0, float(fire_intensity)))
+            if room.fire_intensity >= 0.2:
+                room.on_fire = True
+                room.flame = True
+                room.alarm = True
+                room.led_color = "pulsing_red"
+            elif room.fire_intensity <= 0.05:
+                room.on_fire = False
+                room.flame = False
+        if flame is not None:
+            room.flame = bool(flame)
+            if flame:
+                room.alarm = True
+        room.iot_locked = False
+        room.last_iot_update = time.time()
+        room.last_retrieve_ms = 0.0  # local adjustment
+        from app.core.timeutil import iso_ms
+
+        room.last_received_at = iso_ms()
+        self._route_force = True
+        return True
+
     def extinguish_fire(self, node_id: str | None = None):
-        """Clear fire on one room or all rooms."""
+        """Clear fire on one room or all rooms and begin cool-down to SAFE."""
         targets = [node_id] if node_id else list(self.rooms.keys())
         cleared = 0
         for nid in targets:
             room = self.rooms.get(nid)
-            if not room or not room.on_fire:
+            if not room or not (room.on_fire or room.flame or room.fire_intensity > 0):
                 continue
             room.on_fire = False
             room.flame = False
             room.fire_intensity = 0.0
-            room.temperature = max(28.0, room.temperature * 0.55)
-            room.smoke = max(0.0, room.smoke * 0.4)
-            room.alarm = room.smoke > 35
+            room.temperature = NORMAL_TEMP_C + 2.0
+            room.smoke = 0.0
+            room.alarm = False
+            room.led_color = "green"
             cleared += 1
         if cleared:
             if node_id and node_id in self.graph.nodes:
@@ -374,6 +506,8 @@ class SimulationEngine:
                 name = "all zones"
             self._add_alert("info", f"Fire extinguished — {name}", node_id)
             self._route_force = True
+            # Free trapped/red people immediately so they can move again
+            self._release_trapped_people()
         return cleared > 0
 
     def random_fire(self):
@@ -383,121 +517,181 @@ class SimulationEngine:
             if n.node_type == "room" and not self.rooms[nid].on_fire
         ]
         if candidates:
-            self.start_fire(random.choice(candidates), intensity=0.5)
+            self.start_fire(random.choice(candidates), intensity=0.75)
+
+    def _building_has_active_fire(self) -> bool:
+        return any(r.on_fire or r.flame for r in self.rooms.values())
+
+    def _building_has_hazard(self) -> bool:
+        return any(
+            r.on_fire or r.flame or r.smoke > SAFE_SMOKE_PCT
+            for r in self.rooms.values()
+        )
+
+    def _release_trapped_people(self) -> int:
+        """Untrap red occupants and give them exit routes (or mark SAFE if building is clear)."""
+        self.room_routes = self.graph.routes_for_all_rooms()
+        released = 0
+        clear = not self._building_has_hazard()
+        for person in self.people.values():
+            if person.status != "trapped":
+                continue
+            route = self.room_routes.get(person.position)
+            if clear:
+                person.status = "safe"
+                person.path = []
+                person.path_index = 0
+                person.progress = 0.0
+                person.wait_ticks = 0
+                node = self.graph.nodes.get(person.position)
+                if node:
+                    person.x = node.x + random.uniform(-0.35, 0.35)
+                    person.y = node.y + random.uniform(-0.35, 0.35)
+                self.routes.pop(person.id, None)
+                released += 1
+            elif route and route.found and len(route.path) > 1:
+                person.status = "evacuating"
+                person.path = route.path
+                person.path_index = 0
+                person.progress = 0.0
+                person.wait_ticks = 0
+                self.routes[person.id] = person.path
+                released += 1
+        if released:
+            self._recompute_occupancy()
+            self._route_force = True
+            self._add_alert("info", f"Released {released} trapped occupants — resuming movement")
+        return released
 
     def _spread_fire_and_smoke(self):
         """
-        Adjacent-room fire spread + faster smoke diffusion.
-        Smoke propagates through adjacency every tick; flames ignite slower.
+        Containment mode: only burning rooms intensify (stronger growth).
+        Also drives simulated DHT22 / gas / humidity curves for the twin.
         """
-        heat_updates: dict[str, float] = defaultdict(float)
-        smoke_updates: dict[str, float] = defaultdict(float)
-        ignite: set[str] = set()
-
         for nid, room in self.rooms.items():
-            neighbors = self.graph.adjacency.get(nid, [])
-
             if room.on_fire:
-                room.fire_intensity = min(1.0, room.fire_intensity + self.heat_rate * 0.12)
+                # Stronger intensity ramp toward flashover
+                room.fire_intensity = min(
+                    1.0,
+                    room.fire_intensity + self.heat_rate * (0.22 + room.fire_intensity * 0.18),
+                )
                 room.temperature = min(
-                    120.0,
-                    room.temperature + self.heat_rate * (7 + room.fire_intensity * 14),
+                    140.0,
+                    room.temperature
+                    + self.heat_rate * (12 + room.fire_intensity * 22),
                 )
                 room.smoke = min(
                     100.0,
-                    room.smoke + self.smoke_rate * (8 + room.fire_intensity * 12),
+                    room.smoke + self.smoke_rate * (12 + room.fire_intensity * 18),
                 )
-                room.flame = room.fire_intensity > 0.22
+                room.flame = room.fire_intensity > 0.18
                 room.alarm = True
-
-                for neighbor, dist in neighbors:
-                    nroom = self.rooms[neighbor]
-                    prox = 1.0 / max(1.0, dist / 10.0)
-
-                    # Vertical shaft bias (stairs / floor delta)
-                    src_floor = self.graph.nodes[nid].floor
-                    dst_floor = self.graph.nodes[neighbor].floor
-                    vertical = abs(src_floor - dst_floor) > 0
-                    stairs = self.graph.nodes[neighbor].node_type == "stairs" or self.graph.nodes[nid].node_type == "stairs"
-                    vert_mult = 1.55 if (vertical or stairs) else 1.0
-
-                    # Smoke: spreads faster / farther than flame (stronger vertically)
-                    smoke_push = (
-                        room.smoke
-                        * self.smoke_rate
-                        * prox
-                        * (0.22 + room.fire_intensity * 0.35)
-                        * vert_mult
-                    )
-                    smoke_updates[neighbor] += smoke_push
-
-                    # Heat / flame: slower adjacent ignition
-                    if not nroom.on_fire:
-                        heat_push = (
-                            room.temperature
-                            * self.spread_rate
-                            * prox
-                            * room.fire_intensity
-                            * 0.055
-                            * vert_mult
-                        )
-                        heat_updates[neighbor] += heat_push
-                        ignite_chance = (
-                            self.spread_rate * prox * room.fire_intensity * 0.22 * vert_mult
-                        )
-                        if room.fire_intensity > 0.5 and random.random() < ignite_chance:
-                            ignite.add(neighbor)
-
-            # Smoke-only rooms also diffuse to neighbors (pre-fire plume)
-            elif room.smoke > 8:
-                for neighbor, dist in neighbors:
-                    prox = 1.0 / max(1.0, dist / 10.0)
-                    smoke_updates[neighbor] += room.smoke * self.smoke_rate * prox * 0.14
-
-            else:
-                if room.temperature > 22:
-                    room.temperature = max(22.0, room.temperature - 0.06)
-                burning_near = any(self.rooms[n].on_fire for n, _ in neighbors)
-                if room.smoke > 0 and not burning_near:
-                    room.smoke = max(0.0, room.smoke - 0.12)
-
-        for nid, heat in heat_updates.items():
-            room = self.rooms[nid]
-            room.temperature = min(120.0, room.temperature + heat)
-
-        for nid, smoke in smoke_updates.items():
-            room = self.rooms[nid]
-            room.smoke = min(100.0, room.smoke + smoke)
-
-        for nid in ignite:
-            room = self.rooms[nid]
-            if room.on_fire:
+                room.led_color = "pulsing_red"
+                self._simulate_sensors_for_room(room)
                 continue
-            if room.temperature > 46 or room.smoke > 55:
-                room.on_fire = True
-                room.flame = True
-                room.fire_intensity = 0.28
-                room.alarm = True
-                room.temperature = max(room.temperature, 52.0)
-                name = self.graph.nodes[nid].name
-                self._add_alert("critical", f"Fire spread to {name}", nid)
-                self._route_force = True
+
+            # Faster cool-down toward normal when not on fire
+            if room.temperature > NORMAL_TEMP_C:
+                rate = 0.55 if room.temperature < SAFE_TEMP_C else 0.28
+                room.temperature = max(NORMAL_TEMP_C, room.temperature - rate)
+            if room.smoke > 0 and not room.iot_locked:
+                room.smoke = max(0.0, room.smoke - 0.85)
+            elif room.smoke > 0 and room.iot_locked:
+                if room.last_iot_update and (time.time() - room.last_iot_update) > 8.0:
+                    room.iot_locked = False
+
+            # Decay simulated gas / humidity back toward ambient when safe
+            if not room.iot_locked:
+                if room.gas > 180:
+                    room.gas = max(120.0, room.gas - 45.0)
+                if room.humidity < 40:
+                    room.humidity = min(42.0, room.humidity + 0.35)
+                elif room.humidity > 45:
+                    room.humidity = max(40.0, room.humidity - 0.25)
+
+            if (
+                room.temperature < SAFE_TEMP_C
+                and room.smoke < SAFE_SMOKE_PCT
+                and not room.flame
+            ):
+                if room.alarm or room.fire_intensity > 0 or room.led_color != "green":
+                    self._restore_room_safe(room, announce=False)
+                room.led_color = "green"
+                room.alarm = False
+                room.fire_intensity = 0.0
+                room.flame = False
+
+    def _simulate_sensors_for_room(self, room: RoomState):
+        """
+        Virtual Wokwi-like sensors for rooms without live ESP32 lock:
+        DHT22 (temp already on room), humidity drop, MQ gas ADC rise with intensity.
+        """
+        if room.iot_locked and room.last_iot_update and (time.time() - room.last_iot_update) < 6.0:
+            # Live device owns the channel briefly — still nudge gas if missing
+            if room.gas < 200 and room.on_fire:
+                room.gas = max(room.gas, 800.0)
+            return
+
+        fi = room.fire_intensity
+        # Humidity falls as heat rises (DHT22-like)
+        room.humidity = max(8.0, 42.0 - fi * 28.0 + random.uniform(-1.5, 1.5))
+        # Gas sensor ADC-ish (0–4095): ambient ~150 → flashover ~3200+
+        target_gas = 180.0 + fi * 2800.0 + room.smoke * 12.0
+        room.gas = min(4095.0, room.gas * 0.7 + target_gas * 0.3 + random.uniform(-40, 40))
+        # Battery / RSSI wobble for SCADA realism
+        if room.device_id is None:
+            room.device_id = f"SIM-{room.node_id}"
+        room.battery = max(40.0, min(100.0, room.battery - random.uniform(0, 0.02)))
+        room.signal = max(-90.0, min(-40.0, -55.0 + random.uniform(-8, 8)))
+
+    def _return_people_to_safe(self):
+        """When building is clear, stop evacuation and settle people in current rooms."""
+        if self._building_has_hazard():
+            return
+        restored = 0
+        for person in self.people.values():
+            if person.status not in ("evacuating", "trapped"):
+                continue
+            node = self.graph.nodes.get(person.position)
+            if not node:
+                continue
+            # Don't pull people back from exits they already reached as evacuated
+            person.status = "safe"
+            person.path = []
+            person.path_index = 0
+            person.progress = 0.0
+            person.wait_ticks = 0
+            # Snap to room center (normal position)
+            person.x = node.x + random.uniform(-0.35, 0.35)
+            person.y = node.y + random.uniform(-0.35, 0.35)
+            self.routes.pop(person.id, None)
+            restored += 1
+        if restored:
+            self._recompute_occupancy()
+            self._route_force = True
+            if self.tick % 25 == 0:
+                self._add_alert("info", "All clear — occupants returning to normal positions")
 
     def _update_sensors_and_hazard(self):
         for nid, room in self.rooms.items():
             if room.sensor_health == "failed":
                 reading = SensorReading(45.0, 30.0, False, room.occupancy)
             else:
-                jitter_t = random.uniform(-0.35, 0.35) if not room.on_fire else random.uniform(-1, 1)
-                jitter_s = random.uniform(-0.25, 0.25)
+                # DHT22-like temp noise; gas/smoke already driven by fire sim
+                jitter_t = random.uniform(-0.6, 0.6) if not room.on_fire else random.uniform(-1.8, 1.8)
+                jitter_s = random.uniform(-0.8, 0.8) if room.on_fire else random.uniform(-0.25, 0.25)
                 reading = SensorReading(
                     temperature=max(18.0, room.temperature + jitter_t),
                     smoke=max(0.0, min(100.0, room.smoke + jitter_s)),
                     flame=room.flame,
                     occupancy=room.occupancy,
                 )
-                room.temperature = reading.temperature
-                room.smoke = reading.smoke
+                if not room.iot_locked:
+                    room.temperature = reading.temperature
+                    room.smoke = reading.smoke
+                elif room.on_fire:
+                    # Even with IoT lock, keep simulated gas climbing with fire
+                    self._simulate_sensors_for_room(room)
 
             node = self.graph.nodes[nid]
             result = compute_hazard(reading, capacity=node.capacity)
@@ -519,6 +713,63 @@ class SimulationEngine:
             else:
                 room.led_color = "green"
 
+        # Push simulated sensors into device registry for IoT page (throttled)
+        if self.tick % 5 == 0:
+            self._publish_simulated_devices()
+
+    def _publish_simulated_devices(self):
+        """Mirror room sensors as SIM-* devices when no live ESP32 owns the room."""
+        try:
+            from app.services.device_registry import device_registry
+        except Exception:
+            return
+        for nid, room in self.rooms.items():
+            # Only publish active / interesting rooms to cut noise
+            if not (room.on_fire or room.gas >= 600 or room.smoke >= 15 or room.alarm):
+                continue
+            live = None
+            for d in device_registry.devices.values():
+                if d.node_id == nid and d.online and not str(d.device_id).startswith("SIM-"):
+                    live = d
+                    break
+            if live:
+                continue
+            name = self.graph.nodes[nid].name if nid in self.graph.nodes else nid
+            status = "SAFE"
+            if room.on_fire or room.flame or room.temperature >= 70 or room.gas >= 2000:
+                status = "CRITICAL"
+            elif room.temperature >= 45 or room.gas >= 1200 or room.smoke >= 35:
+                status = "WARNING"
+            device_registry.ingest(
+                {
+                    "deviceId": room.device_id or f"SIM-{nid}",
+                    "room": name,
+                    "type": "ROOM",
+                    "floor": self.graph.nodes[nid].floor if nid in self.graph.nodes else 0,
+                    "nodeId": nid,
+                    "temperature": room.temperature,
+                    "humidity": room.humidity,
+                    "gasLevel": room.gas,
+                    "smoke": room.smoke,
+                    "flame": room.flame,
+                    "status": status,
+                    "battery": room.battery,
+                    "signal": room.signal,
+                    "occupancy": room.occupancy,
+                }
+            )
+            from app.core.timeutil import iso_ms
+
+            sim_id = room.device_id or f"SIM-{nid}"
+            d = device_registry.devices.get(sim_id)
+            if d:
+                d.retrieve_ms = 0.4  # local sim ingest
+                d.received_at = iso_ms()
+                d.received_at_ms = int(time.time() * 1000)
+            if room.last_retrieve_ms is None:
+                room.last_retrieve_ms = 0.4
+            room.last_received_at = iso_ms()
+
     # ── A* every ~1s ──────────────────────────────────────────
 
     def _update_routes(self, force: bool = False):
@@ -536,13 +787,24 @@ class SimulationEngine:
         self.room_routes = self.graph.routes_for_all_rooms()
         self._last_path_ms = (time.perf_counter() - t0) * 1000
 
-        any_fire = any(r.on_fire or r.smoke > 20 for r in self.rooms.values())
+        any_fire = any(r.on_fire or r.smoke > SAFE_SMOKE_PCT for r in self.rooms.values())
         for person in self.people.values():
-            if person.status in ("evacuated", "trapped"):
+            if person.status == "evacuated":
                 continue
 
             route = self.room_routes.get(person.position)
             if route and route.found:
+                # Allow trapped (red) people to move again once a path exists
+                if person.status == "trapped":
+                    if len(route.path) > 1:
+                        person.status = "evacuating"
+                        person.path = route.path
+                        person.path_index = 0
+                        person.progress = 0.0
+                        person.wait_ticks = 0
+                        self.routes[person.id] = person.path
+                    continue
+
                 if any_fire or person.status == "evacuating":
                     new_path = route.path
                     # Preserve progress when prefix matches
@@ -556,7 +818,6 @@ class SimulationEngine:
                             idx = new_path.index(person.path[person.path_index])
                             person.path = new_path
                             person.path_index = idx
-                            # keep progress along current edge
                         else:
                             person.path = new_path
                             person.path_index = 0
@@ -565,13 +826,18 @@ class SimulationEngine:
                             person.status = "evacuating"
                     self.routes[person.id] = person.path
             else:
-                if any_fire:
+                if any_fire and person.status != "evacuated":
                     person.status = "trapped"
+                    person.path = []
                     self._add_alert(
                         "danger",
                         f"{person.name} trapped — no safe exit",
                         person.position,
                     )
+
+        # Building clear → people stop evacuating and resume SAFE
+        if not any_fire:
+            self._return_people_to_safe()
 
     # ── Crowd motion + collisions ─────────────────────────────
 
@@ -688,7 +954,7 @@ class SimulationEngine:
                 "level": level,
                 "message": message,
                 "node_id": node_id,
-                "timestamp": datetime.utcnow().isoformat() + "Z",
+                "timestamp": iso_ms(),
             },
         )
         self.alerts = self.alerts[:50]
@@ -724,6 +990,8 @@ class SimulationEngine:
         self._update_sensors_and_hazard()
         self._update_routes(force=False)
         self._move_people()
+        if not self._building_has_hazard():
+            self._return_people_to_safe()
         if self.tick % 2 == 0:
             self._record_history()
         await self._broadcast("tick")
@@ -786,6 +1054,8 @@ class SimulationEngine:
                     "device_id": r.device_id,
                     "battery": round(r.battery, 1),
                     "signal": round(r.signal, 1),
+                    "retrieve_ms": r.last_retrieve_ms,
+                    "received_at": r.last_received_at,
                 }
                 for nid, r in self.rooms.items()
             },
@@ -860,6 +1130,28 @@ class SimulationManager:
         self.status = "ready"
         self._loop_task = asyncio.create_task(self._loop())
 
+    async def ensure_evacuation(self, reason: str = "sensor hazard") -> bool:
+        """
+        Sensor-driven evacuation: force route recompute and start the twin
+        so occupants begin moving to safe exits.
+        Returns True if the engine was (re)started.
+        """
+        eng = self.engine
+        eng._route_force = True
+        started = False
+        if eng.status == SimStatus.PAUSED:
+            await eng.resume()
+            eng._add_alert("critical", f"Auto-evacuation resumed — {reason}")
+            started = True
+        elif eng.status != SimStatus.RUNNING:
+            await eng.start()
+            eng._add_alert("critical", f"Auto-evacuation started — {reason}")
+            started = True
+        else:
+            # Already running — still force an immediate re-route pass
+            eng._update_routes(force=True)
+        return started
+
     def _on_mqtt_command(self, topic: str, payload: dict):
         cmd = payload.get("command") or payload.get("cmd")
         if not cmd:
@@ -872,7 +1164,7 @@ class SimulationManager:
             elif action == "fire":
                 nid = (payload.get("payload") or {}).get("node_id")
                 if nid:
-                    self.engine.start_fire(nid, 0.45)
+                    self.engine.start_fire(nid, 0.75)
         elif cmd == "ping":
             device_id = topic.rstrip("/").split("/")[-1]
             if self.mqtt and device_id not in ("commands", "cmd"):

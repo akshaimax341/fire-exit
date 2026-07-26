@@ -60,7 +60,7 @@ export function FloatingSimToolbar({ className }: { className?: string }) {
         size="sm"
         onClick={() =>
           selected
-            ? command('fire', { node_id: selected, intensity: 0.5 })
+            ? command('fire', { node_id: selected, intensity: 0.8 })
             : command('random-fire')
         }
       >
@@ -71,7 +71,7 @@ export function FloatingSimToolbar({ className }: { className?: string }) {
         variant="warning"
         size="sm"
         disabled={!selected}
-        onClick={() => selected && command('smoke', { node_id: selected, amount: 25 })}
+        onClick={() => selected && command('smoke', { node_id: selected, amount: 40 })}
       >
         <CloudFog className="h-3.5 w-3.5" />
         Add Smoke

@@ -6,6 +6,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.security import get_current_user, require_role
+from app.core.timeutil import iso_ms
 from app.db.session import get_db
 from app.repositories.iot import AlertRepository
 from app.schemas.telemetry import AlertAck
@@ -35,7 +36,7 @@ async def list_alerts(
                 "device_id": r.device_id,
                 "node_id": r.node_id,
                 "acknowledged": r.acknowledged,
-                "timestamp": r.created_at.isoformat() + "Z",
+                "timestamp": iso_ms(r.created_at) if r.created_at else iso_ms(),
             }
             for r in rows
         ]

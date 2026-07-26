@@ -102,6 +102,7 @@ export const useSimStore = create<SimStore>((set, get) => ({
       fire: { path: '/api/simulation/fire', body: payload },
       extinguish: { path: '/api/simulation/extinguish', body: payload },
       smoke: { path: '/api/simulation/smoke', body: payload },
+      sensors: { path: '/api/simulation/sensors', body: payload },
       'block-exit': { path: '/api/simulation/block-exit', body: payload },
       'unblock-exit': { path: '/api/simulation/unblock-exit', body: payload },
       spawn: { path: '/api/simulation/spawn', body: payload },

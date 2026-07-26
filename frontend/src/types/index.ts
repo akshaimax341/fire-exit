@@ -55,6 +55,8 @@ export interface RoomState {
   device_id?: string | null;
   battery?: number;
   signal?: number;
+  retrieve_ms?: number | null;
+  received_at?: string | null;
 }
 
 export interface DeviceState {
@@ -77,6 +79,10 @@ export interface DeviceState {
   hazard: number;
   health: string;
   mqtt_topic?: string;
+  retrieve_ms?: number | null;
+  received_at?: string | null;
+  received_at_ms?: number | null;
+  device_timestamp_ms?: number | null;
 }
 
 export interface FacilityAlert {

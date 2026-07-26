@@ -7,21 +7,23 @@ export function Panel({
   className,
   title,
   action,
+  bodyClassName,
 }: {
   children: ReactNode;
   className?: string;
   title?: string;
   action?: ReactNode;
+  bodyClassName?: string;
 }) {
   return (
     <motion.div
       initial={{ opacity: 0, y: 10 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.4, ease: [0.22, 1, 0.36, 1] }}
-      className={cn('glass-float overflow-hidden rounded-[1.35rem]', className)}
+      className={cn('glass-float flex flex-col overflow-hidden rounded-[1.35rem]', className)}
     >
       {(title || action) && (
-        <div className="flex items-center justify-between border-b border-white/8 px-4 py-3.5">
+        <div className="flex shrink-0 items-center justify-between border-b border-white/8 px-4 py-3">
           {title && (
             <h3 className="text-[11px] font-semibold uppercase tracking-[0.18em] text-muted">
               {title}
@@ -30,7 +32,7 @@ export function Panel({
           {action}
         </div>
       )}
-      <div className="p-4">{children}</div>
+      <div className={cn('min-h-0 flex-1 p-4', bodyClassName)}>{children}</div>
     </motion.div>
   );
 }

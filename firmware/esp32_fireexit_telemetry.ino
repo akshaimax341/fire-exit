@@ -70,7 +70,7 @@ void loop() {
   doc["battery"] = 92.0;
   doc["signal"] = WiFi.RSSI();
   doc["flame"] = flame;
-  doc["timestamp"] = (long)(millis() / 1000);
+  doc["timestamp"] = (long)millis();  // device uptime ms for retrieve logs
 
   String body;
   serializeJson(doc, body);

@@ -12,6 +12,15 @@ from app.config import settings
 from app.db.session import init_db
 from app.simulation.engine import simulation_manager
 
+# Millisecond timestamps in retrieve / telemetry logs
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s.%(msecs)03d %(levelname)s [%(name)s] %(message)s",
+    datefmt="%Y-%m-%d %H:%M:%S",
+    force=True,
+)
+logging.Formatter.default_msec_format = "%s.%03d"
+
 logger = logging.getLogger("uvicorn.error")
 
 

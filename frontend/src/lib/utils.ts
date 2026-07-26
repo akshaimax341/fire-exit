@@ -48,3 +48,25 @@ export function nodeTypeColor(type: string): string {
 export function formatMs(ms: number): string {
   return `${ms.toFixed(1)} ms`;
 }
+
+/** Clock time with milliseconds, e.g. 8:39:12.345 PM */
+export function formatTimeMs(iso?: string | null): string {
+  if (!iso) return '—';
+  try {
+    return new Date(iso).toLocaleTimeString(undefined, {
+      hour: '2-digit',
+      minute: '2-digit',
+      second: '2-digit',
+      fractionalSecondDigits: 3,
+    } as Intl.DateTimeFormatOptions);
+  } catch {
+    return iso;
+  }
+}
+
+/** Delta from ambient for sensor adjustment display */
+export function sensorDelta(value: number, ambient: number, unit = ''): string {
+  const d = value - ambient;
+  const sign = d > 0 ? '+' : '';
+  return `${sign}${d.toFixed(unit === '%' || unit === '' ? 0 : 1)}${unit}`;
+}

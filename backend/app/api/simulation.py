@@ -11,12 +11,12 @@ router = APIRouter()
 
 class FireRequest(BaseModel):
     node_id: str
-    intensity: float = Field(default=0.45, ge=0.1, le=1.0)
+    intensity: float = Field(default=0.75, ge=0.1, le=1.0)
 
 
 class SmokeRequest(BaseModel):
     node_id: str
-    amount: float = Field(default=20.0, ge=1, le=100)
+    amount: float = Field(default=35.0, ge=1, le=100)
 
 
 class ExitRequest(BaseModel):
@@ -29,6 +29,16 @@ class SpawnRequest(BaseModel):
 
 class ExtinguishRequest(BaseModel):
     node_id: Optional[str] = None
+
+
+class SensorAdjustRequest(BaseModel):
+    node_id: str
+    temperature: Optional[float] = Field(default=None, ge=0, le=150)
+    humidity: Optional[float] = Field(default=None, ge=0, le=100)
+    gas: Optional[float] = Field(default=None, ge=0, le=4095)
+    smoke: Optional[float] = Field(default=None, ge=0, le=100)
+    fire_intensity: Optional[float] = Field(default=None, ge=0, le=1)
+    flame: Optional[bool] = None
 
 
 class ConfigRequest(BaseModel):
@@ -86,6 +96,39 @@ async def increase_smoke(
 ):
     simulation_manager.engine.increase_smoke(body.node_id, body.amount)
     return {"ok": True}
+
+
+@router.post("/sensors")
+async def adjust_sensors(
+    body: SensorAdjustRequest,
+    user: dict = Depends(require_role("admin", "operator")),
+):
+    ok = simulation_manager.engine.set_room_sensors(
+        body.node_id,
+        temperature=body.temperature,
+        humidity=body.humidity,
+        gas=body.gas,
+        smoke=body.smoke,
+        fire_intensity=body.fire_intensity,
+        flame=body.flame,
+    )
+    if not ok:
+        raise HTTPException(404, "Node not found")
+    room = simulation_manager.engine.rooms[body.node_id]
+    return {
+        "ok": True,
+        "node_id": body.node_id,
+        "sensors": {
+            "temperature": room.temperature,
+            "humidity": room.humidity,
+            "gas": room.gas,
+            "smoke": room.smoke,
+            "fire_intensity": room.fire_intensity,
+            "flame": room.flame,
+            "retrieve_ms": room.last_retrieve_ms,
+            "received_at": room.last_received_at,
+        },
+    }
 
 
 @router.post("/block-exit")

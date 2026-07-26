@@ -1,14 +1,25 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Outlet, useLocation } from 'react-router-dom';
 import { AnimatePresence, motion } from 'framer-motion';
 import { Sidebar, TopNav } from '@/components/layout/Shell';
+import { useSimStore } from '@/stores/simStore';
+import { useAuthStore } from '@/stores/authStore';
 import { cn } from '@/lib/utils';
 
 export function AppShell() {
   const location = useLocation();
   const [mobileOpen, setMobileOpen] = useState(false);
   const [collapsed, setCollapsed] = useState(false);
-  const immersive = ['/twin', '/designer'].includes(location.pathname);
+  const immersive = ['/twin', '/designer', '/dashboard'].includes(location.pathname);
+  const token = useAuthStore((s) => s.user?.access_token);
+  const connect = useSimStore((s) => s.connect);
+  const fetchState = useSimStore((s) => s.fetchState);
+
+  useEffect(() => {
+    if (!token) return;
+    void fetchState().catch(() => undefined);
+    connect();
+  }, [token, connect, fetchState]);
 
   return (
     <div className="flex h-full overflow-hidden">

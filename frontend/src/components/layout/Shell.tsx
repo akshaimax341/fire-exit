@@ -13,8 +13,6 @@ import {
   WifiOff,
   Menu,
   X,
-  Search,
-  Bell,
   Settings,
   PanelLeft,
 } from 'lucide-react';
@@ -65,12 +63,21 @@ export function TopNav({
   const status = useSimStore((s) => s.state?.status);
   const connected = useSimStore((s) => s.connected);
   const fireRooms = useSimStore((s) => s.state?.metrics?.fire_rooms ?? 0);
-  const alerts = useSimStore((s) => s.state?.alerts?.length ?? 0);
+  const metrics = useSimStore((s) => s.state?.metrics);
+  const people = useSimStore((s) => s.state?.people);
   const user = useAuthStore((s) => s.user);
-  const [search, setSearch] = useState('');
+
+  const trapped =
+    metrics?.people_trapped ??
+    people?.filter((p) => p.status === 'trapped').length ??
+    0;
+  const total =
+    metrics?.total_people ??
+    people?.length ??
+    (metrics?.people_inside ?? 0) + (metrics?.people_evacuated ?? 0) + trapped;
+  const alive = Math.max(0, total - trapped);
 
   const timeStr = now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
-  const dateStr = now.toLocaleDateString([], { weekday: 'short', month: 'short', day: 'numeric' });
 
   return (
     <header className="sticky top-0 z-30 mx-3 mt-3 flex items-center gap-3 rounded-2xl border border-white/12 bg-black/40 px-3 py-2.5 shadow-[0_12px_40px_rgba(0,0,0,0.45),inset_0_1px_0_rgba(255,255,255,0.12)] backdrop-blur-2xl sm:px-4">
@@ -103,14 +110,11 @@ export function TopNav({
         </div>
       </div>
 
-      <div className="mx-auto hidden items-center gap-3 lg:flex">
-        <div className="rounded-full bg-white/[0.05] px-3.5 py-1.5 text-center ring-1 ring-white/10">
-          <div className="font-mono text-sm font-semibold tabular-nums text-white">{timeStr}</div>
-          <div className="text-[9px] uppercase tracking-wider text-white/40">{dateStr}</div>
-        </div>
+      <div className="mx-auto hidden items-center gap-2 sm:flex">
+        <div className="font-mono text-sm font-semibold tabular-nums text-white/80">{timeStr}</div>
         <div
           className={cn(
-            'flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-semibold uppercase tracking-wider ring-1',
+            'flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[10px] font-semibold uppercase tracking-wider ring-1',
             status === 'running' && 'bg-safe/15 text-safe ring-safe/30',
             status === 'paused' && 'bg-warning/15 text-warning ring-warning/30',
             (!status || status === 'idle') && 'bg-white/5 text-white/50 ring-white/10',
@@ -128,44 +132,36 @@ export function TopNav({
         </div>
         <div
           className={cn(
-            'flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-semibold ring-1',
+            'flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[10px] font-semibold ring-1',
             fireRooms > 0
-              ? 'bg-critical/20 text-critical ring-critical/40 animate-pulse'
+              ? 'bg-critical/20 text-critical ring-critical/40'
               : 'bg-white/5 text-white/45 ring-white/10',
           )}
         >
-          <Flame className="h-3.5 w-3.5" />
-          {fireRooms > 0 ? `${fireRooms} Fire Alert` : 'All Clear'}
+          <Flame className="h-3 w-3" />
+          {fireRooms > 0 ? `${fireRooms} Fire` : 'All Clear'}
+        </div>
+        <div
+          className="flex items-center gap-1.5 rounded-full bg-safe/15 px-2.5 py-1 text-[10px] font-semibold text-safe ring-1 ring-safe/30"
+          title="Safe + evacuating + evacuated"
+        >
+          <Users className="h-3 w-3" />
+          Alive {alive}
+        </div>
+        <div
+          className={cn(
+            'flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[10px] font-semibold ring-1',
+            trapped > 0
+              ? 'bg-critical/20 text-critical ring-critical/40'
+              : 'bg-white/5 text-white/45 ring-white/10',
+          )}
+          title="Trapped — no safe exit"
+        >
+          Not alive {trapped}
         </div>
       </div>
 
-      <div className="ml-auto flex items-center gap-1.5 sm:gap-2">
-        <div className="relative hidden md:block">
-          <Search className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-white/35" />
-          <input
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            placeholder="Search rooms, badges…"
-            className="w-44 rounded-full border border-white/10 bg-white/[0.05] py-1.5 pl-9 pr-3 text-xs text-white outline-none placeholder:text-white/30 focus:border-accent/40 focus:ring-2 focus:ring-accent/20 lg:w-56"
-          />
-        </div>
-        <button
-          type="button"
-          className="relative rounded-full bg-white/[0.05] p-2 text-white/55 ring-1 ring-white/10 hover:bg-white/10 hover:text-white"
-        >
-          <Bell className="h-4 w-4" />
-          {alerts > 0 && (
-            <span className="absolute -right-0.5 -top-0.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-critical px-1 text-[9px] font-bold text-white">
-              {Math.min(alerts, 9)}
-            </span>
-          )}
-        </button>
-        <NavLink
-          to="/settings"
-          className="rounded-full bg-white/[0.05] p-2 text-white/55 ring-1 ring-white/10 hover:bg-white/10 hover:text-white"
-        >
-          <Settings className="h-4 w-4" />
-        </NavLink>
+      <div className="ml-auto flex items-center gap-2">
         <div className="hidden items-center gap-2 rounded-full bg-white/[0.05] py-1 pl-1 pr-3 ring-1 ring-white/10 sm:flex">
           <div className="flex h-7 w-7 items-center justify-center rounded-full bg-tesla/80 text-[10px] font-bold text-white">
             {(user?.full_name ?? 'U').slice(0, 1)}
@@ -175,8 +171,8 @@ export function TopNav({
             <div className="font-mono text-[9px] uppercase text-white/40">{user?.role}</div>
           </div>
         </div>
-        <span className="hidden items-center gap-1 text-[10px] text-white/40 xl:flex">
-          {connected ? <Wifi className="h-3 w-3 text-safe" /> : <WifiOff className="h-3 w-3 text-danger" />}
+        <span className="flex items-center" title={connected ? 'Live' : 'Offline'}>
+          {connected ? <Wifi className="h-3.5 w-3.5 text-safe" /> : <WifiOff className="h-3.5 w-3.5 text-danger" />}
         </span>
       </div>
     </header>

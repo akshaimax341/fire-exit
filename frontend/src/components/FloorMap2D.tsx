@@ -1,6 +1,6 @@
 import { useMemo, useRef, useState, useCallback } from 'react';
 import { useSimStore } from '@/stores/simStore';
-import { hazardColor, ledColor, nodeTypeColor } from '@/lib/utils';
+import { hazardColor, ledColor, nodeTypeColor, cn } from '@/lib/utils';
 import type { BuildingNode, NodeType } from '@/types';
 
 function planSize(type: NodeType, capacity: number): { w: number; h: number } {
@@ -18,7 +18,13 @@ function planSize(type: NodeType, capacity: number): { w: number; h: number } {
   }
 }
 
-export function FloorMap2D({ heatmap = true }: { heatmap?: boolean }) {
+export function FloorMap2D({
+  heatmap = true,
+  className,
+}: {
+  heatmap?: boolean;
+  className?: string;
+}) {
   const state = useSimStore((s) => s.state);
   const floor = useSimStore((s) => s.floor);
   const setFloor = useSimStore((s) => s.setFloor);
@@ -103,8 +109,12 @@ export function FloorMap2D({ heatmap = true }: { heatmap?: boolean }) {
   const slabH = bounds.maxY - bounds.minY + slabPad * 2;
 
   return (
-    <div className="relative h-[400px] overflow-hidden rounded-[1.1rem] bg-[#08080a] ring-1 ring-white/10">
-      <div className="absolute left-3 top-3 z-10 flex flex-wrap gap-1.5">
+    <div
+      className={cn(
+        'relative h-full min-h-[280px] overflow-hidden rounded-[1.1rem] bg-[#08080a] ring-1 ring-white/10',
+        className,
+      )}
+    >      <div className="absolute left-3 top-3 z-10 flex flex-wrap gap-1.5">
         {floors.map((f) => (
           <button
             key={f}
@@ -465,11 +475,15 @@ export function FloorMap2D({ heatmap = true }: { heatmap?: boolean }) {
           <div className="font-semibold tracking-tight text-white">{nodeMap[selected]?.name}</div>
           <div className="mt-1 grid grid-cols-2 gap-x-4 gap-y-1 font-mono text-[10px] text-muted">
             <span>Temp {rooms[selected].temperature}°C</span>
+            <span>Humidity {rooms[selected].humidity ?? 40}%</span>
             <span>Smoke {rooms[selected].smoke}%</span>
+            <span>Gas {Math.round(rooms[selected].gas ?? 0)}</span>
+            <span>Intensity {((rooms[selected].fire_intensity ?? 0) * 100).toFixed(0)}%</span>
             <span>Flame {rooms[selected].flame ? 'YES' : 'no'}</span>
             <span>Occ {rooms[selected].occupancy}</span>
             <span>Hazard {rooms[selected].hazard?.score?.toFixed(2) ?? '—'}</span>
             <span className="uppercase">{rooms[selected].hazard?.level ?? 'safe'}</span>
+            <span>{rooms[selected].device_id ?? 'no device'}</span>
           </div>
         </div>
       )}

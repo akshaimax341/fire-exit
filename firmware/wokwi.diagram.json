@@ -1,0 +1,61 @@
+{
+  "version": 1,
+  "author": "Uri Shaked",
+  "editor": "wokwi",
+  "parts": [
+    { "type": "board-esp32-devkit-c-v4", "id": "esp", "top": 0, "left": -4.76, "attrs": {} },
+    { "type": "wokwi-gas-sensor", "id": "gas1", "top": 156.3, "left": -367.4, "attrs": {} },
+    { "type": "wokwi-ds1307", "id": "rtc1", "top": 196.2, "left": 144.1, "attrs": {} },
+    {
+      "type": "wokwi-dht22",
+      "id": "dht1",
+      "top": -124.5,
+      "left": -139.8,
+      "attrs": { "temperature": "28.2", "humidity": "27.5" }
+    },
+    { "type": "wokwi-ky-040", "id": "encoder1", "top": -151.9, "left": 8.8, "attrs": {} },
+    {
+      "type": "board-ssd1306",
+      "id": "oled1",
+      "top": 195.14,
+      "left": 269.03,
+      "attrs": { "i2cAddress": "0x3c" }
+    },
+    {
+      "type": "wokwi-rgb-led",
+      "id": "rgb1",
+      "top": 13.6,
+      "left": -210.1,
+      "attrs": { "common": "cathode" }
+    }
+  ],
+  "connections": [
+    [ "esp:TX", "$serialMonitor:RX", "", [] ],
+    [ "esp:RX", "$serialMonitor:TX", "", [] ],
+    [ "gas1:GND", "esp:GND.1", "black", [ "h28.8", "v18.4" ] ],
+    [ "gas1:AOUT", "esp:34", "green", [ "h134.4", "v-48" ] ],
+    [ "rtc1:5V", "esp:5V", "red", [ "h-38.4", "v47.6", "h-115.2" ] ],
+    [ "rtc1:SDA", "esp:21", "green", [ "h-28.8", "v-125.1" ] ],
+    [ "rtc1:SCL", "esp:22", "green", [ "h-19.2", "v-163.4", "h-9.6" ] ],
+    [ "gas1:DOUT", "esp:27", "green", [ "h163.2", "v-0.3" ] ],
+    [ "dht1:VCC", "esp:3V3", "red", [ "v0" ] ],
+    [ "dht1:GND", "esp:GND.1", "black", [ "v0" ] ],
+    [ "dht1:SDA", "esp:4", "green", [ "v0" ] ],
+    [ "oled1:VCC", "esp:3V3", "red", [ "v0" ] ],
+    [ "oled1:GND", "esp:GND.1", "black", [ "v0" ] ],
+    [ "oled1:SCL", "esp:22", "green", [ "v0" ] ],
+    [ "oled1:SDA", "esp:21", "green", [ "v0" ] ],
+    [ "gas1:VCC", "esp:5V", "red", [ "h0" ] ],
+    [ "rtc1:GND", "esp:GND.1", "black", [ "h0" ] ],
+    [ "encoder1:CLK", "esp:18", "green", [ "h76.8", "v249.6" ] ],
+    [ "encoder1:DT", "esp:19", "green", [ "h86.4", "v230.5" ] ],
+    [ "encoder1:SW", "esp:23", "green", [ "h96", "v220.9" ] ],
+    [ "encoder1:GND", "esp:GND.1", "black", [ "h96", "v260" ] ],
+    [ "encoder1:VCC", "esp:3V3", "red", [ "h105.6", "v10" ] ],
+    [ "rgb1:R", "esp:25", "green", [ "v0" ] ],
+    [ "rgb1:G", "esp:26", "green", [ "v0" ] ],
+    [ "rgb1:B", "esp:33", "green", [ "v0" ] ],
+    [ "rgb1:COM", "esp:GND.1", "green", [ "v0" ] ]
+  ],
+  "dependencies": {}
+}
