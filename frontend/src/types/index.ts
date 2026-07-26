@@ -50,6 +50,64 @@ export interface RoomState {
   alarm: boolean;
   occupancy: number;
   hazard: HazardInfo;
+  humidity?: number;
+  gas?: number;
+  device_id?: string | null;
+  battery?: number;
+  signal?: number;
+}
+
+export interface DeviceState {
+  device_id: string;
+  room: string;
+  room_type: string;
+  floor: number;
+  node_id: string | null;
+  temperature: number;
+  humidity: number;
+  gas: number;
+  smoke: number;
+  flame: boolean;
+  status: string;
+  battery: number;
+  signal: number;
+  occupancy: number;
+  last_seen: string;
+  online: boolean;
+  hazard: number;
+  health: string;
+  mqtt_topic?: string;
+}
+
+export interface FacilityAlert {
+  id?: string;
+  alert_id?: string;
+  level: string;
+  category?: string;
+  message: string;
+  device_id?: string | null;
+  node_id?: string | null;
+  acknowledged?: boolean;
+  timestamp: string;
+}
+
+export interface FacilityStatistics {
+  people_inside: number;
+  people_evacuated: number;
+  people_remaining: number;
+  avg_temperature: number;
+  max_temperature: number;
+  fire_rooms: number;
+  critical_rooms: number;
+  safe_rooms: number;
+  blocked_exits: number;
+  available_exits: number;
+  online_devices: number;
+  offline_devices: number;
+  system_health: string;
+  response_time_ms: number;
+  hazard_index: number;
+  active_alerts: number;
 }
 
 export interface Person {

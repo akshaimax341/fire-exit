@@ -61,6 +61,13 @@ class RoomState:
     alarm: bool = False
     occupancy: int = 0
     hazard: dict[str, Any] = field(default_factory=dict)
+    humidity: float = 40.0
+    gas: float = 0.0
+    device_id: Optional[str] = None
+    battery: float = 100.0
+    signal: float = -55.0
+    last_iot_update: Optional[float] = None
+    iot_locked: bool = False  # when True, live ESP32 owns temp/smoke briefly
 
 
 class SimulationEngine:
@@ -277,6 +284,46 @@ class SimulationEngine:
         self._route_force = True
         return True
 
+    def apply_iot_telemetry(
+        self,
+        node_id: str,
+        *,
+        temperature: float,
+        smoke: float,
+        flame: bool,
+        humidity: float = 40.0,
+        gas: float = 0.0,
+        device_id: str | None = None,
+        battery: float = 100.0,
+        signal: float = -55.0,
+        auto_ignite: bool = False,
+    ) -> bool:
+        """Blend live ESP32 reading into twin room state."""
+        room = self.rooms.get(node_id)
+        if not room:
+            return False
+        room.temperature = float(temperature)
+        room.smoke = max(room.smoke, float(smoke))
+        room.humidity = float(humidity)
+        room.gas = float(gas)
+        room.device_id = device_id
+        room.battery = battery
+        room.signal = signal
+        room.sensor_health = "ok"
+        room.last_iot_update = time.time()
+        room.iot_locked = True
+        if flame or auto_ignite:
+            room.flame = True
+            if not room.on_fire and (flame or temperature >= 55 or smoke >= 45):
+                self.start_fire(node_id, intensity=0.42)
+            else:
+                room.on_fire = True
+                room.fire_intensity = max(room.fire_intensity, 0.35)
+                room.alarm = True
+                room.led_color = "pulsing_red"
+        self._route_force = True
+        return True
+
     def block_exit(self, exit_id: str):
         node = self.graph.nodes.get(exit_id)
         room = self.rooms.get(exit_id)
@@ -366,12 +413,20 @@ class SimulationEngine:
                     nroom = self.rooms[neighbor]
                     prox = 1.0 / max(1.0, dist / 10.0)
 
-                    # Smoke: spreads faster / farther than flame
+                    # Vertical shaft bias (stairs / floor delta)
+                    src_floor = self.graph.nodes[nid].floor
+                    dst_floor = self.graph.nodes[neighbor].floor
+                    vertical = abs(src_floor - dst_floor) > 0
+                    stairs = self.graph.nodes[neighbor].node_type == "stairs" or self.graph.nodes[nid].node_type == "stairs"
+                    vert_mult = 1.55 if (vertical or stairs) else 1.0
+
+                    # Smoke: spreads faster / farther than flame (stronger vertically)
                     smoke_push = (
                         room.smoke
                         * self.smoke_rate
                         * prox
                         * (0.22 + room.fire_intensity * 0.35)
+                        * vert_mult
                     )
                     smoke_updates[neighbor] += smoke_push
 
@@ -383,10 +438,11 @@ class SimulationEngine:
                             * prox
                             * room.fire_intensity
                             * 0.055
+                            * vert_mult
                         )
                         heat_updates[neighbor] += heat_push
                         ignite_chance = (
-                            self.spread_rate * prox * room.fire_intensity * 0.22
+                            self.spread_rate * prox * room.fire_intensity * 0.22 * vert_mult
                         )
                         if room.fire_intensity > 0.5 and random.random() < ignite_chance:
                             ignite.add(neighbor)
@@ -724,6 +780,11 @@ class SimulationEngine:
                     "alarm": r.alarm,
                     "occupancy": r.occupancy,
                     "hazard": r.hazard,
+                    "humidity": round(r.humidity, 1),
+                    "gas": round(r.gas, 1),
+                    "device_id": r.device_id,
+                    "battery": round(r.battery, 1),
+                    "signal": round(r.signal, 1),
                 }
                 for nid, r in self.rooms.items()
             },
@@ -776,16 +837,47 @@ class SimulationManager:
     def __init__(self):
         self.engine = SimulationEngine()
         self._loop_task: Optional[asyncio.Task] = None
-        self._mqtt = None
+        self.mqtt = None
         self.status = "initializing"
 
     async def initialize(self):
+        from app.config import settings
+        from app.services.mqtt_bridge import MQTTBridge
+        from app.services.device_registry import device_registry
+
         self.engine.spawn_people(40)
+        self.mqtt = MQTTBridge(settings.MQTT_BROKER, settings.MQTT_PORT, settings.MQTT_TOPIC_PREFIX)
+        self.mqtt.set_command_handler(self._on_mqtt_command)
+        self.mqtt.connect()
+        device_registry.start_watchdog()
         self.status = "ready"
         self._loop_task = asyncio.create_task(self._loop())
 
+    def _on_mqtt_command(self, topic: str, payload: dict):
+        cmd = payload.get("command") or payload.get("cmd")
+        if not cmd:
+            return
+        if cmd == "simulation":
+            action = (payload.get("payload") or {}).get("action")
+            if action == "reset":
+                self.engine.reset()
+                self.engine.spawn_people(28)
+            elif action == "fire":
+                nid = (payload.get("payload") or {}).get("node_id")
+                if nid:
+                    self.engine.start_fire(nid, 0.45)
+        elif cmd == "ping":
+            device_id = topic.rstrip("/").split("/")[-1]
+            if self.mqtt and device_id not in ("commands", "cmd"):
+                self.mqtt.publish_device(device_id, {"pong": True, "device_id": device_id})
+
     async def shutdown(self):
+        from app.services.device_registry import device_registry
+
         self.status = "shutdown"
+        await device_registry.stop_watchdog()
+        if self.mqtt:
+            self.mqtt.disconnect()
         if self._loop_task:
             self._loop_task.cancel()
             try:

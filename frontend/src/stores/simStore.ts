@@ -65,6 +65,15 @@ export const useSimStore = create<SimStore>((set, get) => ({
         if (msg.event === 'snapshot' || msg.event === 'tick' || msg.event === 'status') {
           if (msg.data) set({ state: msg.data });
         }
+        if (msg.event === 'telemetry' && msg.data) {
+          const { snapshot, devices, device } = msg.data;
+          if (snapshot) set({ state: snapshot });
+          // Lazy import to avoid circular deps at module load
+          import('./deviceStore').then(({ useDeviceStore }) => {
+            if (Array.isArray(devices)) useDeviceStore.getState().setDevices(devices);
+            else if (device) useDeviceStore.getState().upsertDevice(device);
+          });
+        }
       } catch {
         /* ignore */
       }

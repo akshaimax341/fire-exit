@@ -145,8 +145,43 @@ class BuildingGraph:
         latency = (time.perf_counter() - t0) * 1000
         return PathResult([], float("inf"), None, latency, False)
 
-    def nearest_exit(self, start: str) -> PathResult:
-        """Multi-exit: A* to every open exit, keep lowest total cost."""
+    def dijkstra(self, start: str, goal: str) -> PathResult:
+        """Uniform-cost search (Dijkstra) — same edge costs as A*, no heuristic."""
+        t0 = time.perf_counter()
+        if start not in self.nodes or goal not in self.nodes:
+            return PathResult([], float("inf"), None, 0.0, False)
+
+        open_heap: list[tuple[float, str]] = [(0.0, start)]
+        came_from: dict[str, str] = {}
+        dist_map: dict[str, float] = {start: 0.0}
+        closed: set[str] = set()
+
+        while open_heap:
+            cost_u, current = heapq.heappop(open_heap)
+            if current in closed:
+                continue
+            if current == goal:
+                path = self._reconstruct(came_from, current)
+                latency = (time.perf_counter() - t0) * 1000
+                return PathResult(path, cost_u, goal, latency, True)
+            closed.add(current)
+            for neighbor, dist in self.adjacency.get(current, []):
+                if neighbor in closed:
+                    continue
+                step = self.traversal_cost(current, neighbor, dist)
+                if step == float("inf"):
+                    continue
+                tentative = cost_u + step
+                if tentative < dist_map.get(neighbor, float("inf")):
+                    dist_map[neighbor] = tentative
+                    came_from[neighbor] = current
+                    heapq.heappush(open_heap, (tentative, neighbor))
+
+        latency = (time.perf_counter() - t0) * 1000
+        return PathResult([], float("inf"), None, latency, False)
+
+    def nearest_exit(self, start: str, algorithm: str = "astar") -> PathResult:
+        """Multi-exit: route to every open exit, keep lowest total cost."""
         t0 = time.perf_counter()
         exits = self.get_exits()
         if not exits or start not in self.nodes:
@@ -157,9 +192,10 @@ class BuildingGraph:
             latency = (time.perf_counter() - t0) * 1000
             return PathResult([start], 0.0, start, latency, True)
 
+        search = self.dijkstra if algorithm == "dijkstra" else self.astar
         best: Optional[PathResult] = None
         for exit_node in exits:
-            result = self.astar(start, exit_node.id)
+            result = search(start, exit_node.id)
             if result.found and (best is None or result.cost < best.cost):
                 best = result
 

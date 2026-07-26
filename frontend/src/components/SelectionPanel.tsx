@@ -9,11 +9,24 @@ import {
   YAxis,
   Tooltip,
 } from 'recharts';
-import { Flame, CloudFog, Thermometer, Users, DoorOpen, Activity } from 'lucide-react';
+import {
+  Flame,
+  CloudFog,
+  Thermometer,
+  Users,
+  DoorOpen,
+  Activity,
+  Droplets,
+  Battery,
+  Wifi,
+  Radio,
+  Timer,
+} from 'lucide-react';
 import { Badge, Button } from '@/components/ui';
 import { useSimStore } from '@/stores/simStore';
+import { useDeviceStore } from '@/stores/deviceStore';
 import { useAuthStore } from '@/stores/authStore';
-import { cn, hazardColor } from '@/lib/utils';
+import { cn } from '@/lib/utils';
 
 export function SelectionPanel({ className }: { className?: string }) {
   const selected = useSimStore((s) => s.selectedNodeId);
@@ -23,10 +36,14 @@ export function SelectionPanel({ className }: { className?: string }) {
   const history = useSimStore((s) => s.state?.history ?? []);
   const command = useSimStore((s) => s.command);
   const canControl = useAuthStore((s) => s.hasRole('admin', 'operator'));
+  const devices = useDeviceStore((s) => s.devices);
 
   const node = nodes?.find((n) => n.id === selected);
   const room = selected ? rooms?.[selected] : null;
   const route = selected ? routes?.[selected] : null;
+  const device =
+    devices.find((d) => d.node_id === selected) ||
+    devices.find((d) => d.device_id === room?.device_id);
 
   const spark = useMemo(
     () =>
@@ -38,14 +55,16 @@ export function SelectionPanel({ className }: { className?: string }) {
     [history],
   );
 
+  const travel =
+    route?.cost != null && Number.isFinite(route.cost)
+      ? `${Math.max(1, Math.round(route.cost / 12))}s · cost ${route.cost.toFixed(1)}`
+      : '—';
+
   return (
     <motion.aside
       initial={{ opacity: 0, x: 24 }}
       animate={{ opacity: 1, x: 0 }}
-      className={cn(
-        'glass-float flex h-full flex-col overflow-hidden rounded-[1.5rem]',
-        className,
-      )}
+      className={cn('glass-float flex h-full flex-col overflow-hidden rounded-[1.5rem]', className)}
     >
       <div className="border-b border-white/10 px-4 py-3">
         <div className="text-[10px] font-semibold uppercase tracking-[0.18em] text-white/40">
@@ -57,6 +76,9 @@ export function SelectionPanel({ className }: { className?: string }) {
         {node && (
           <div className="mt-2 flex flex-wrap gap-1.5">
             <Badge tone="accent">{node.type}</Badge>
+            {(device?.device_id || room?.device_id) && (
+              <Badge tone="accent">{device?.device_id || room?.device_id}</Badge>
+            )}
             {room && (
               <Badge
                 tone={
@@ -80,7 +102,7 @@ export function SelectionPanel({ className }: { className?: string }) {
       <div className="flex-1 space-y-4 overflow-y-auto p-4">
         {!selected && (
           <p className="text-xs leading-relaxed text-white/45">
-            Click a room, corridor, exit, or person in the twin to inspect live telemetry.
+            Click a room in the twin to inspect ESP32 telemetry and evacuation guidance.
           </p>
         )}
 
@@ -88,20 +110,29 @@ export function SelectionPanel({ className }: { className?: string }) {
           <>
             <div className="grid grid-cols-2 gap-2">
               <Metric icon={<Thermometer className="h-3.5 w-3.5" />} label="Temperature" value={`${room.temperature}°C`} />
-              <Metric icon={<CloudFog className="h-3.5 w-3.5" />} label="Smoke" value={`${room.smoke}%`} />
-              <Metric icon={<Flame className="h-3.5 w-3.5" />} label="Flame" value={room.flame ? 'YES' : 'Clear'} alert={room.flame} />
-              <Metric icon={<Users className="h-3.5 w-3.5" />} label="Occupancy" value={String(room.occupancy)} />
+              <Metric icon={<Droplets className="h-3.5 w-3.5" />} label="Humidity" value={`${device?.humidity ?? room.humidity ?? 40}%`} />
+              <Metric icon={<CloudFog className="h-3.5 w-3.5" />} label="Gas" value={String(Math.round(device?.gas ?? room.gas ?? 0))} />
+              <Metric icon={<Flame className="h-3.5 w-3.5" />} label="Smoke" value={`${room.smoke}%`} alert={room.flame} />
+              <Metric icon={<Users className="h-3.5 w-3.5" />} label="People" value={String(room.occupancy)} />
               <Metric icon={<Activity className="h-3.5 w-3.5" />} label="Hazard" value={String(room.hazard?.score?.toFixed(2) ?? '0')} />
               <Metric icon={<DoorOpen className="h-3.5 w-3.5" />} label="Exit" value={route?.exit_id ?? '—'} />
+              <Metric icon={<Timer className="h-3.5 w-3.5" />} label="Travel" value={travel} />
+              <Metric icon={<Battery className="h-3.5 w-3.5" />} label="Battery" value={`${device?.battery ?? room.battery ?? 100}%`} />
+              <Metric icon={<Wifi className="h-3.5 w-3.5" />} label="Signal" value={`${device?.signal ?? room.signal ?? -55} dBm`} />
+              <Metric icon={<Radio className="h-3.5 w-3.5" />} label="Sensor" value={room.sensor_health} />
+              <Metric
+                icon={<Wifi className="h-3.5 w-3.5" />}
+                label="Link"
+                value={device ? (device.online ? 'Online' : 'Offline') : 'Sim'}
+              />
             </div>
 
             <div className="rounded-2xl bg-white/[0.04] p-3 ring-1 ring-white/8">
               <div className="mb-1 text-[10px] font-semibold uppercase tracking-wider text-white/40">
-                Sensor Health
+                Last Updated
               </div>
-              <div className="flex items-center justify-between text-sm">
-                <span className="text-white/70">{room.sensor_health}</span>
-                <span className="font-mono text-xs text-accent">{room.led_color}</span>
+              <div className="font-mono text-xs text-white/70">
+                {device?.last_seen ? new Date(device.last_seen).toLocaleString() : 'Simulation tick'}
               </div>
               {route?.found && (
                 <div className="mt-2 text-[11px] text-white/50">

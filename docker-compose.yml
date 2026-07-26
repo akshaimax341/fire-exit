@@ -37,6 +37,41 @@ services:
       - ./infra/mosquitto.conf:/mosquitto/config/mosquitto.conf
     restart: unless-stopped
 
+  # Public HTTPS tunnel → compose backend
+  #   docker compose --profile tunnel up -d ngrok
+  # Inspector: http://localhost:4040
+  ngrok:
+    image: ngrok/ngrok:latest
+    profiles: ["tunnel"]
+    restart: unless-stopped
+    command:
+      - "http"
+      - "--log=stdout"
+      - "backend:8000"
+    environment:
+      NGROK_AUTHTOKEN: ${NGROK_AUTHTOKEN:?Set NGROK_AUTHTOKEN in .env or the environment}
+    ports:
+      - "4040:4040"
+    depends_on:
+      - backend
+
+  # Tunnel host uvicorn at 127.0.0.1:8000 (Docker Desktop)
+  #   docker compose --profile tunnel-host up -d ngrok-host
+  ngrok-host:
+    image: ngrok/ngrok:latest
+    profiles: ["tunnel-host"]
+    restart: unless-stopped
+    command:
+      - "http"
+      - "--log=stdout"
+      - "host.docker.internal:8000"
+    environment:
+      NGROK_AUTHTOKEN: ${NGROK_AUTHTOKEN:?Set NGROK_AUTHTOKEN in .env or the environment}
+    ports:
+      - "4040:4040"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
   postgres:
     image: postgres:16-alpine
     environment:

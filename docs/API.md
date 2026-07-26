@@ -77,6 +77,48 @@ Treats the node as degraded; hazard engine applies elevated unknown risk.
 
 ---
 
+## ESP32 Telemetry & IoT
+
+### POST `/api/telemetry` (public — no JWT)
+
+ESP32 devices POST every ~5 seconds:
+
+```json
+{
+  "deviceId": "DEV001",
+  "room": "Office 101",
+  "type": "ROOM",
+  "floor": 1,
+  "temperature": 42,
+  "humidity": 35,
+  "gasLevel": 1300,
+  "status": "WARNING",
+  "battery": 88,
+  "signal": -62,
+  "timestamp": 1710000000
+}
+```
+
+Pipeline: validate → device registry → SQLite persist → MQTT `fireexit/device/{id}` → WebSocket `telemetry` → twin room update (auto-ignite on CRITICAL/flame). Devices marked **offline after 15s** without updates.
+
+### Inventory (JWT)
+
+- `GET /api/devices`
+- `GET /api/device/{device_id}`
+- `POST /api/device/{device_id}/command` — `{ "command": "ping"|"led"|"buzzer"|"reset"|"simulation", "payload": {} }`
+- `GET /api/rooms`
+- `GET /api/buildings`
+- `GET /api/statistics`
+- `GET /api/alerts`
+- `POST /api/alerts/{alert_id}/ack`
+
+### Simulation extras
+
+- `POST /api/simulation/extinguish` — `{ "node_id": "..." }` optional
+- `POST /api/simulation/spawn-max` — fill to 1000 occupants
+
+---
+
 ## Building
 
 - `GET /api/building/layout` — live layout
@@ -102,7 +144,7 @@ Connect: `ws://localhost:8000/ws/simulation`
 Server events:
 
 ```json
-{ "event": "snapshot" | "tick" | "status" | "heartbeat", "data": { ... }, "tick": 42 }
+{ "event": "snapshot" | "tick" | "status" | "telemetry" | "heartbeat", "data": { ... }, "tick": 42 }
 ```
 
 Client commands:
@@ -120,9 +162,10 @@ Client commands:
 
 | Topic | Payload |
 |-------|---------|
-| `fireexit/{node_id}/hazard` | Hazard fusion result |
+| `fireexit/device/{deviceId}` | Live ESP32 / registry state |
+| `fireexit/commands/#` | Device commands (`reset`, `ping`, `led`, `buzzer`, `display`, `firmware`, `simulation`) |
+| `fireexit/{node_id}/hazard` | Hazard fusion result (legacy) |
 | `fireexit/{node_id}/path` | Current evacuation path |
-| `fireexit/{node_id}/cmd` | Remote inject commands |
 
 If the broker is unavailable the simulation continues in **local fail-safe mode**.
 
@@ -136,4 +179,8 @@ EdgeCost = exp(6 · Risk) − 1   (blocked if Risk ≥ 0.75)
 PathCost = Distance + HazardCost + CrowdCost
 ```
 
+Flame may be estimated from temperature / gas / rate-of-rise when the optical sensor is absent.
+
 Levels: `safe` (&lt;0.25) · `warning` · `danger` · `critical` (≥0.85)
+
+Routing: multi-exit **A*** (default) and **Dijkstra** available in `BuildingGraph`.
